@@ -73,7 +73,7 @@ impl TracingTracerPriv {
                 "gstpad.parent.name" = gstpad_parent_name_value;
             ];
             let valueset = fields.value_set(&values);
-            let span = Span::new_with(meta, &valueset, dispatch);
+            let span = Span::new_root_with(meta, &valueset, dispatch);
             if span.is_disabled() {
                 return;
             }
