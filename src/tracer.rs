@@ -8,43 +8,33 @@ use gstreamer::{
     traits::{GstObjectExt, PadExt},
     Buffer, FlowReturn, Object, Pad, Query, Tracer,
 };
-use tracing::{Callsite, Id};
+use tracing::{
+    span::{EnteredSpan, Span},
+    Callsite,
+};
 use tracing_core::Kind;
 
 pub struct TracingTracerPriv {
-    span_stack: thread_local::ThreadLocal<RefCell<Vec<Id>>>,
+    _p: (),
+}
+
+thread_local! {
+    static SPAN_STACK: RefCell<Vec<EnteredSpan>> = RefCell::new(Vec::new());
 }
 
 impl TracingTracerPriv {
-    fn push_span(&self, id: Id) {
-        self.span_stack
-            .get_or(|| RefCell::new(Vec::new()))
-            .borrow_mut()
-            .push(id)
+    fn push_span(&self, span: EnteredSpan) {
+        SPAN_STACK.with(|stack| {
+            stack.borrow_mut().push(span);
+        })
     }
-    fn pop_span(&self) -> Option<Id> {
-        self.span_stack
-            .get_or(|| RefCell::new(Vec::new()))
-            .borrow_mut()
-            .pop()
-    }
-    fn current(&self) -> Option<Id> {
-        self.span_stack
-            .get_or(|| RefCell::new(Vec::new()))
-            .borrow_mut()
-            .last()
-            .cloned()
+    fn pop_span(&self) -> Option<EnteredSpan> {
+        SPAN_STACK.with(|stack| stack.borrow_mut().pop())
     }
 
     fn post(&self) {
-        if let Some(id) = self.pop_span() {
-            tracing::dispatcher::get_default(|dispatch| {
-                dispatch.exit(&id);
-                dispatch.try_close(id.clone());
-                if let Some(current) = self.current() {
-                    dispatch.enter(&current);
-                }
-            })
+        if let Some(span) = self.pop_span() {
+            drop(span);
         }
     }
 
@@ -63,6 +53,7 @@ impl TracingTracerPriv {
         if interest.is_never() {
             return;
         }
+
         let meta = callsite.metadata();
         tracing_core::dispatcher::get_default(move |dispatch| {
             if !dispatch.enabled(meta) {
@@ -82,14 +73,12 @@ impl TracingTracerPriv {
                 "gstpad.parent.name" = gstpad_parent_name_value;
             ];
             let valueset = fields.value_set(&values);
-            let attrs = tracing::span::Attributes::new(meta, &valueset);
-            let span_id = dispatch.new_span(&attrs);
-            if let Some(current) = self.current() {
-                dispatch.record_follows_from(&span_id, &current);
-                dispatch.exit(&current);
+            let span = Span::new_with(meta, &valueset, dispatch);
+            if span.is_disabled() {
+                return;
             }
-            dispatch.enter(&span_id);
-            self.push_span(span_id);
+            let entered = span.entered();
+            self.push_span(entered);
         });
     }
 }
@@ -109,9 +98,7 @@ impl ObjectSubclass for TracingTracerPriv {
     type Interfaces = ();
 
     fn new() -> Self {
-        Self {
-            span_stack: thread_local::ThreadLocal::new(),
-        }
+        Self { _p: () }
     }
 }
 
