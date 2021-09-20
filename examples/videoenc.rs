@@ -2,7 +2,11 @@
 use gstreamer::{traits::ElementExt, ClockTime, MessageView::*, State};
 
 fn main() {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt::Subscriber::builder()
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::FULL)
+        .with_thread_names(true)
+        .with_thread_ids(true)
+        .init();
     tracing_gstreamer::integrate_events();
     gstreamer::debug_remove_default_log_function();
     gstreamer::debug_set_default_threshold(gstreamer::DebugLevel::Count);
